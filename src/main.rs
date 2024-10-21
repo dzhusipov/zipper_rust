@@ -2,7 +2,7 @@ use actix_web::{web, App, HttpResponse, HttpServer, Result};
 use indicatif::ProgressBar;
 use reqwest::Client;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::task;
 use zip::write::FileOptions;
 use futures_util::StreamExt;
@@ -11,18 +11,20 @@ use actix_web::http::header::{ContentDisposition, DispositionParam, DispositionT
 use tokio_util::io::ReaderStream;
 use actix_web::rt;
 use tokio::io::AsyncWriteExt;
-use tera::{Tera, Context}; // Added Tera
+use tera::{Tera, Context};
 use serde::Deserialize;
+use url::Url; // Added for URL parsing
+
 
 #[derive(Deserialize)]
 struct FormData {
     url: String,
 }
 
-async fn download_file(url: String, file_path: String) -> io::Result<()> {
+async fn download_file(url: &str, file_path: &Path) -> io::Result<()> {
     let client = Client::new();
     let response = client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -31,7 +33,7 @@ async fn download_file(url: String, file_path: String) -> io::Result<()> {
     let progress = ProgressBar::new(total_size);
 
     // Create the file to write to
-    let mut file = tokio::fs::File::create(&file_path).await?;
+    let mut file = tokio::fs::File::create(file_path).await?;
 
     let mut stream = response.bytes_stream();
 
@@ -45,15 +47,18 @@ async fn download_file(url: String, file_path: String) -> io::Result<()> {
     Ok(())
 }
 
-async fn archive_file(file_path: String, archive_path: String) -> io::Result<()> {
+async fn archive_file(file_path: &Path, archive_path: &Path) -> io::Result<()> {
     // Use spawn_blocking for CPU-bound task
+    let file_path = file_path.to_owned();
+    let archive_path = archive_path.to_owned();
+
     task::spawn_blocking(move || {
         let file = std::fs::File::open(&file_path)?;
         let mut zip_file = std::fs::File::create(&archive_path)?;
         let mut zip = zip::ZipWriter::new(&mut zip_file);
 
         zip.start_file(
-            Path::new(&file_path)
+            file_path
                 .file_name()
                 .unwrap()
                 .to_string_lossy(),
@@ -87,22 +92,45 @@ async fn handle_form(
     form: web::Form<FormData>,
     tmpl: web::Data<Tera>,
 ) -> actix_web::Result<HttpResponse> {
-    let url = form.url.clone();
+    let url = form.url.trim().to_string();
 
     // Validate the URL (simple validation)
     if url.is_empty() {
         return index(tmpl, Some("URL cannot be empty".to_string())).await;
     }
 
-    let file_path = "downloaded_file".to_string();
-    let archive_path = "archive.zip".to_string();
+    // Parse the URL to extract the filename
+    let parsed_url = match Url::parse(&url) {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("Invalid URL: {:?}", e);
+            return index(tmpl, Some("Invalid URL".to_string())).await;
+        }
+    };
+
+    // Extract the filename from the URL path
+    let filename = match Path::new(parsed_url.path())
+        .file_name()
+        .and_then(|name| name.to_str())
+    {
+        Some(name) => name.to_string(),
+        None => "downloaded_file".to_string(),
+    };
+
+    // Ensure the filename is safe (prevent directory traversal)
+    let filename = sanitize_filename::sanitize(&filename);
+
+    // Define file paths
+    let file_path = PathBuf::from(&filename);
+    let archive_filename = format!("{}.zip", filename);
+    let archive_path = PathBuf::from(&archive_filename);
 
     // Download and archive the file
-    if let Err(e) = download_file(url, file_path.clone()).await {
+    if let Err(e) = download_file(&url, &file_path).await {
         eprintln!("Failed to download file: {:?}", e);
         return index(tmpl, Some("Failed to download file".to_string())).await;
     }
-    if let Err(e) = archive_file(file_path.clone(), archive_path.clone()).await {
+    if let Err(e) = archive_file(&file_path, &archive_path).await {
         eprintln!("Failed to archive file: {:?}", e);
         return index(tmpl, Some("Failed to archive file".to_string())).await;
     }
@@ -121,20 +149,19 @@ async fn handle_form(
         }
     });
 
+    // Set the Content-Disposition header to include the correct filename
     Ok(HttpResponse::Ok()
         .insert_header(("Content-Type", "application/zip"))
         .insert_header(ContentDisposition {
             disposition: DispositionType::Attachment,
-            parameters: vec![DispositionParam::Filename(String::from("archive.zip"))],
+            parameters: vec![DispositionParam::Filename(archive_filename)],
         })
         .streaming(stream))
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-
     log4rs::init_file("config/log4rs.yml", Default::default()).unwrap();
-
     // Initialize Tera templates
     let tera = Tera::new("templates/**/*").unwrap();
 

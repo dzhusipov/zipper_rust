@@ -61,5 +61,12 @@ watch: build
 run-benchmark:
 	cargo run --release -p benchmark
 
+docker:
+        docker stop zipper || true
+        docker rm zipper || true
+        docker rmi zipper || true
+        docker build -t zipper -f Dockerfile .
+        docker run -d --name zipper zipper
+
 help:
 	cat Makefile
