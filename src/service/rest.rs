@@ -5,7 +5,7 @@ use actix_web::http::header::{ContentDisposition, DispositionParam, DispositionT
 use actix_web::{web, HttpResponse, Result};
 use tera::{Tera, Context};
 
-use crate::models::form_data::FormData;
+use crate::models::form_data::{AppState, FormData};
 use crate::service::utils::{download_file, archive_file}; // Adjust the path according to your project structure
 
 pub async fn index(tmpl: web::Data<Tera>, error: Option<String>) -> Result<HttpResponse> {
@@ -20,9 +20,10 @@ pub async fn index(tmpl: web::Data<Tera>, error: Option<String>) -> Result<HttpR
     Ok(HttpResponse::Ok().content_type("text/html").body(rendered))
 }
 
-pub  async fn handle_form(
+pub async fn handle_form(
     form: web::Form<FormData>,
     tmpl: web::Data<Tera>,
+    data: web::Data<AppState>,
 ) -> actix_web::Result<HttpResponse> {
     let url = form.url.trim().to_string();
 
@@ -32,7 +33,7 @@ pub  async fn handle_form(
     }
 
     // Download the file and get file paths
-    let (file_path, archive_path) = match download_file(&url).await {
+    let (file_path, archive_path) = match download_file(&url, data.clone()).await {
         Ok(paths) => paths,
         Err(e) => {
             eprintln!("Failed to download file: {:?}", e);
