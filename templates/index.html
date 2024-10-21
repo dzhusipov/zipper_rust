@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>File Downloader</title>
     <style>
+        /* CSS Styles */
         body {
             background-color: #f4f6f8;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -69,31 +70,131 @@
             margin-top: 20px;
         }
 
-        /* Responsive Design */
-        @media (max-width: 600px) {
-            .container {
-                margin: 40px 20px;
-                padding: 30px;
-            }
+        /* Progress Bar Styles */
+        #progress-container {
+            display: none;
+            margin-top: 20px;
+        }
 
-            h1 {
-                font-size: 24px;
-            }
+        #progress-bar {
+            width: 100%;
+            background-color: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
 
-            input[type="text"], button {
-                font-size: 14px;
-            }
+        #progress-fill {
+            width: 0%;
+            height: 20px;
+            background-color: #0066cc;
+            transition: width 0.2s ease;
+        }
+
+        #progress-text {
+            text-align: center;
+            margin-top: 5px;
+            font-size: 14px;
+            color: #555555;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Download File from URL</h1>
-        <form action="/" method="POST">
+        <form id="download-form" action="/" method="POST">
             <label for="url">Enter URL:</label>
             <input type="text" name="url" id="url" placeholder="https://example.com/file.txt" required>
             <button type="submit">Download</button>
         </form>
+
+        <div id="progress-container">
+            <div id="progress-bar">
+                <div id="progress-fill"></div>
+            </div>
+            <div id="progress-text">0%</div>
+        </div>
+
+        {% if error %}
+        <p class="error">{{ error }}</p>
+        {% endif %}
     </div>
+
+    <script>
+        const form = document.getElementById('download-form');
+        const progressContainer = document.getElementById('progress-container');
+        const progressFill = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            // Show the progress bar
+            progressContainer.style.display = 'block';
+            progressFill.style.width = '0%';
+            progressText.textContent = '0%';
+
+            // Start listening to progress updates
+            const evtSource = new EventSource('/progress');
+
+            evtSource.onmessage = function(e) {
+                const percentage = e.data;
+                progressFill.style.width = percentage + '%';
+                progressText.textContent = percentage + '%';
+
+                if (percentage >= 100) {
+                    evtSource.close();
+                    progressText.textContent = 'Download complete! Preparing file...';
+                }
+            };
+
+            // Collect form data
+            const urlValue = document.getElementById('url').value;
+            const formData = new URLSearchParams();
+            formData.append('url', urlValue);
+
+            fetch('/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+                },
+                body: formData.toString()
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.blob().then(blob => ({ blob, response }));
+            })
+            .then(({ blob, response }) => {
+                // Create a link to download the file
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+
+                // Get the filename from the Content-Disposition header
+                const disposition = response.headers.get('Content-Disposition');
+                let filename = 'archive.zip';
+                if (disposition && disposition.indexOf('filename=') !== -1) {
+                    const match = disposition.match(/filename="?([^"]+)"?/);
+                    if (match != null && match[1]) {
+                        filename = match[1];
+                    }
+                }
+
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+
+                // Hide the progress bar
+                progressContainer.style.display = 'none';
+            })
+            .catch(error => {
+                console.error('Download error:', error);
+                progressText.textContent = 'An error occurred during download.';
+                evtSource.close();
+            });
+        });
+    </script>
 </body>
 </html>

@@ -2670,6 +2670,7 @@ dependencies = [
  "actix-web",
  "bytes",
  "futures",
+ "futures-channel",
  "futures-util",
  "indicatif",
  "log",
