@@ -1,4 +1,4 @@
-use actix_web::{web, App, HttpResponse, HttpServer};
+use actix_web::{web, App, HttpResponse, HttpServer, Result};
 use indicatif::ProgressBar;
 use reqwest::Client;
 use std::io::{self, Read, Write};
@@ -10,10 +10,12 @@ use futures_util::TryStreamExt;
 use actix_web::http::header::{ContentDisposition, DispositionParam, DispositionType};
 use tokio_util::io::ReaderStream;
 use actix_web::rt;
-use tokio::io::AsyncWriteExt; // <-- Add this line
+use tokio::io::AsyncWriteExt;
+use tera::{Tera, Context}; // Added Tera
+use serde::Deserialize;
 
-#[derive(serde::Deserialize)]
-struct DownloadRequest {
+#[derive(Deserialize)]
+struct FormData {
     url: String,
 }
 
@@ -35,7 +37,7 @@ async fn download_file(url: String, file_path: String) -> io::Result<()> {
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        file.write_all(&chunk).await?; // This method is now in scope
+        file.write_all(&chunk).await?;
         progress.inc(chunk.len() as u64);
     }
 
@@ -69,19 +71,40 @@ async fn archive_file(file_path: String, archive_path: String) -> io::Result<()>
     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
 }
 
-async fn handle_download(req: web::Query<DownloadRequest>) -> actix_web::Result<HttpResponse> {
-    let url = req.url.clone();
+async fn index(tmpl: web::Data<Tera>, error: Option<String>) -> Result<HttpResponse> {
+    let mut ctx = Context::new();
+    ctx.insert("error", &error);
+
+    let rendered = tmpl.render("index.html", &ctx).map_err(|e| {
+        println!("Template error: {}", e);
+        actix_web::error::ErrorInternalServerError("Template error")
+    })?;
+
+    Ok(HttpResponse::Ok().content_type("text/html").body(rendered))
+}
+
+async fn handle_form(
+    form: web::Form<FormData>,
+    tmpl: web::Data<Tera>,
+) -> actix_web::Result<HttpResponse> {
+    let url = form.url.clone();
+
+    // Validate the URL (simple validation)
+    if url.is_empty() {
+        return index(tmpl, Some("URL cannot be empty".to_string())).await;
+    }
+
     let file_path = "downloaded_file".to_string();
     let archive_path = "archive.zip".to_string();
 
     // Download and archive the file
     if let Err(e) = download_file(url, file_path.clone()).await {
         eprintln!("Failed to download file: {:?}", e);
-        return Ok(HttpResponse::InternalServerError().body("Failed to download file"));
+        return index(tmpl, Some("Failed to download file".to_string())).await;
     }
     if let Err(e) = archive_file(file_path.clone(), archive_path.clone()).await {
         eprintln!("Failed to archive file: {:?}", e);
-        return Ok(HttpResponse::InternalServerError().body("Failed to archive file"));
+        return index(tmpl, Some("Failed to archive file".to_string())).await;
     }
 
     // Stream the archived file back to the user
@@ -109,10 +132,19 @@ async fn handle_download(req: web::Query<DownloadRequest>) -> actix_web::Result<
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+
     log4rs::init_file("config/log4rs.yml", Default::default()).unwrap();
-    
-    HttpServer::new(|| App::new().route("/download", web::get().to(handle_download)))
-        .bind("0.0.0.0:8081")?
-        .run()
-        .await
+
+    // Initialize Tera templates
+    let tera = Tera::new("templates/**/*").unwrap();
+
+    HttpServer::new(move || {
+        App::new()
+            .app_data(web::Data::new(tera.clone()))
+            .route("/", web::get().to(index))
+            .route("/", web::post().to(handle_form))
+    })
+    .bind("0.0.0.0:8080")?
+    .run()
+    .await
 }
