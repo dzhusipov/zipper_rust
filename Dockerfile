@@ -46,5 +46,8 @@ COPY --from=build /app/target/release/zipper /app/zipper
 # Copy necessary configuration files
 COPY --from=build /app/config /app/config
 
+# Copy necessary configuration files
+COPY --from=build /app/templates /app/templates
+
 # Command to run the application
 CMD ["/app/zipper"]
