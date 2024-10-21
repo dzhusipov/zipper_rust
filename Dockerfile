@@ -29,7 +29,7 @@ RUN export PKG_CONFIG_PATH="/usr/lib/pkgconfig" && \
     RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
 
 # Create a new stage for the final image
-FROM alpine:latest
+FROM --platform=linux/amd64 alpine:latest
 
 WORKDIR /app
 
@@ -45,7 +45,6 @@ COPY --from=build /app/target/release/zipper /app/zipper
 
 # Copy necessary configuration files
 COPY --from=build /app/config /app/config
-COPY --from=build /app/.env /app/.env
 
 # Command to run the application
 CMD ["/app/zipper"]
