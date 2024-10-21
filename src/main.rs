@@ -172,7 +172,7 @@ async fn main() -> std::io::Result<()> {
             .route("/", web::get().to(index))
             .route("/", web::post().to(handle_form))
     })
-    .bind("0.0.0.0:8080")?
+    .bind("0.0.0.0:8119")?
     .run()
     .await
 }

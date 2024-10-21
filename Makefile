@@ -66,7 +66,7 @@ docker:
 	docker rm zipper || true
 	docker rmi zipper || true
 	docker build -t zipper -f Dockerfile .
-	docker run -d --name zipper zipper
+	docker run -d -p 8119:8119 --name zipper zipper
 
 help:
 	cat Makefile
